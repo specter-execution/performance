@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
 <title>Specter · Performance</title>
 <meta name="description" content="Every Specter trade, tracked and published. Signal over noise.">
 <meta name="theme-color" content="#4A0505">
@@ -40,11 +41,6 @@ select, .more button, .reset { font: 400 13px var(--sans); color: var(--ink); ba
 select:hover, .more button:hover, .reset:hover { border-color: var(--faint); }
 select:focus-visible, .more button:focus-visible, .reset:focus-visible, th[data-k]:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 .reset { color: var(--muted); }
-
-.notice { border: 1px solid var(--line); border-left: 3px solid var(--flat); background: var(--panel); padding: 12px 16px; font-size: 14px; color: var(--muted); margin-bottom: 18px; }
-.notice b { color: var(--ink); font-weight: 500; }
-.sim { display: inline-block; font: 500 10px var(--sans); letter-spacing: .14em; color: var(--muted); border: 1px solid var(--line); border-radius: 3px; padding: 1px 5px; vertical-align: 1px; }
-td .sim { margin-left: 6px; }
 
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 18px; }
@@ -126,7 +122,6 @@ tr.sub { display: none; }
   <div class="bar">
     <div class="lead">Every trade, wins and losses alike.</div>
     <div class="filters">
-      <select id="fSrc" aria-label="Type" hidden><option value="">All trades</option><option value="live">Sent signals</option><option value="sim">Simulated</option></select>
       <select class="js-month" aria-label="Period"></select>
       <select class="js-coin" aria-label="Coin"></select>
       <select id="fUnit" aria-label="Risk per trade">
@@ -135,8 +130,6 @@ tr.sub { display: none; }
       <button class="reset" id="reset" hidden>Clear</button>
     </div>
   </div>
-
-  <div class="notice" id="notice" hidden></div>
 
   <div class="grid" id="stats"></div>
 
@@ -188,10 +181,6 @@ tr.sub { display: none; }
 </div>
 
 <script>
-// false = tampilan mockup (tanpa label simulasi)
-// true  = WAJIB sebelum publik jika backtest.json ditampilkan: label SIM, pemberitahuan, filter, garis "signals start"
-const LABEL_SIM = false;
-
 const $ = (id) => document.getElementById(id);
 const all$ = (q) => [...document.querySelectorAll(q)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -199,13 +188,11 @@ const trim = (x, dec) => { const t = x.toFixed(dec); return t.includes(".") ? t.
 const sign = (x) => (x > 0 ? "+" : x < 0 ? "−" : "");
 const fmtR = (x, dec = 2) => (x === null || x === undefined || Number.isNaN(x) ? "–" : sign(x) + trim(Math.abs(x), dec) + "R");
 const cls = (x) => (x > 0 ? "up" : x < 0 ? "down" : "flat");
-const simTag = (on) => (LABEL_SIM && on ? '<span class="sim">SIM</span>' : "");
 const monthName = (k) => {
   const [y, m] = k.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 };
 const fmtTime = (iso) => new Date(iso).toLocaleString("en-GB", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
-const fmtDate = (iso) => new Date(iso).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 const hold = (m) => {
   if (m == null) return "–";
   const h = Math.floor(m / 60), d = Math.floor(h / 24);
@@ -219,7 +206,7 @@ const iso = (s) => new Date(String(s).replace(" ", "T")).toISOString();
 
 const DATA = { live: null, backtest: null };
 // month: "30d" = 30 hari terakhir (bawaan), "" = semua, atau "YYYY-MM". unit: 0 = R, selain itu % risiko per trade
-const S = { src: "", month: "30d", coin: "", res: "", unit: 0, shown: 30, auto: true,
+const S = { month: "30d", coin: "", res: "", unit: 0, shown: 30, auto: true,
             sm: { k: "key", d: -1 }, sc: { k: "total", d: -1 }, sl: { k: "closed", d: -1 } };
 
 // nilai R -> tampilan sesuai pilihan (R, atau % = R x risiko per trade, risiko tetap)
@@ -233,8 +220,7 @@ const fmtV = (r, dec = 2) => {
 let ALL = [];
 const cut = () => new Date(Date.now() - 30 * 864e5).toISOString();
 const inPeriod = (t) => !S.month || (S.month === "30d" ? t.closed >= cut() : t.closed.startsWith(S.month));
-const all = () => ALL.filter((t) => !S.src || t.src === S.src);
-const pick = (byMonth, byCoin) => all().filter((t) => (!byMonth || inPeriod(t)) && (!byCoin || !S.coin || slot(t.pair) === S.coin));
+const pick = (byMonth, byCoin) => ALL.filter((t) => (!byMonth || inPeriod(t)) && (!byCoin || !S.coin || slot(t.pair) === S.coin));
 
 function summarize(ts) {
   const rs = ts.map((t) => t.R), w = rs.filter((r) => r > 0), l = rs.filter((r) => r < 0);
@@ -249,7 +235,7 @@ function summarize(ts) {
 function group(ts, keyOf) {
   const g = new Map();
   ts.forEach((t) => { const k = keyOf(t); if (!g.has(k)) g.set(k, []); g.get(k).push(t); });
-  return [...g].map(([key, v]) => ({ key, sim: v.every((t) => t.src === "sim"), ...summarize(v) }));
+  return [...g].map(([key, v]) => ({ key, ...summarize(v) }));
 }
 const sorted = (rows, s) => [...rows].sort((a, b) => {
   const x = a[s.k], y = b[s.k];
@@ -276,12 +262,11 @@ function perWeek(ts) {
 
 function stats() {
   const ts = pick(true, true), s = summarize(ts), pw = perWeek(ts);
-  const nSim = ts.filter((t) => t.src === "sim").length;
   const card = (k, v, note = "", extra = "") =>
     `<div class="card ${extra}"><div class="k">${k}</div><div class="v">${v}</div>${note ? `<div class="note">${note}</div>` : ""}</div>`;
   $("stats").innerHTML =
     card(`Total result · ${periodLabel()}`, `<span class="${cls(s.total)}">${fmtV(s.total)}</span>`,
-      `${s.n} closed trade${s.n === 1 ? "" : "s"}` + (LABEL_SIM && nSim ? ` · ${nSim} simulated` : "") +
+      `${s.n} closed trade${s.n === 1 ? "" : "s"}` +
       (S.unit ? `<br>${fmtR(s.total)} × ${S.unit}% risk per trade. Not compounded, before fees.` : ""), "hero") +
     card("Win rate", s.wr == null ? "–" : `${s.wr}%`, `${s.wins} wins · ${s.losses} losses`) +
     card("Profit factor", s.pf ?? "–", "wins ÷ losses") +
@@ -325,12 +310,6 @@ function chart() {
       prev = m;
     }
   });
-  const batas = ts.findIndex((t) => t.src === "live");
-  if (LABEL_SIM && batas > 0) {
-    const x = X(batas);
-    grid += `<line x1="${x}" x2="${x}" y1="${pt}" y2="${H - pb}" stroke="var(--flat)" stroke-dasharray="4 4"/>` +
-      `<text x="${x - 6}" y="${pt + 11}" text-anchor="end" font-size="11" fill="var(--flat)">signals start</text>`;
-  }
   box.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative result">
     ${grid}<line x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--faint)"/>
     <path d="${area}" fill="${col}" opacity=".07"/><path d="${line}" fill="none" stroke="${col}" stroke-width="1.6"/>
@@ -341,7 +320,7 @@ function chart() {
     const p = pts[Math.max(0, Math.min(pts.length - 1, Math.round(((fx - pl) / (W - pl - pr)) * (pts.length - 1))))];
     hov.setAttribute("cx", X(p.i)); hov.setAttribute("cy", Y(p.y)); hov.style.display = "";
     tip.style.display = "block"; tip.style.left = `${(X(p.i) / W) * r.width}px`; tip.style.top = `${(Y(p.y) / H) * r.height}px`;
-    tip.textContent = p.t ? `#${p.t.id} ${coinOf(p.t.pair)} ${fmtV(p.t.R)}${LABEL_SIM && p.t.src === "sim" ? " (sim)" : ""} · total ${lab(+p.y.toFixed(2))}` : "Start";
+    tip.textContent = p.t ? `#${p.t.id} ${coinOf(p.t.pair)} ${fmtV(p.t.R)} · total ${lab(+p.y.toFixed(2))}` : "Start";
   });
   svg.addEventListener("mouseleave", () => { tip.style.display = "none"; hov.style.display = "none"; });
 }
@@ -351,7 +330,7 @@ function months() {
   if (!rows.length) { $("months").innerHTML = '<tbody><tr><td class="empty">No closed trades yet.</td></tr></tbody>'; return; }
   const mx = Math.max(...rows.map((m) => Math.abs(m.total))) || 1, s = S.sm;
   $("months").innerHTML = `<thead><tr>${th("Month", "key", s)}${th("Trades", "n", s, "n")}${th("Wins", "wins", s, "n hide-sm")}${th("Losses", "losses", s, "n hide-sm")}${th("Win rate", "wr", s, "n")}${th("Result", "total", s, "n")}<th class="barcell"></th></tr></thead><tbody>` +
-    rows.map((m) => `<tr class="pick ${S.month === m.key ? "on" : ""}" data-month="${m.key}"><td>${monthName(m.key)}${simTag(m.sim)}</td><td class="n">${m.n}</td><td class="n hide-sm">${m.wins}</td><td class="n hide-sm">${m.losses}</td>
+    rows.map((m) => `<tr class="pick ${S.month === m.key ? "on" : ""}" data-month="${m.key}"><td>${monthName(m.key)}</td><td class="n">${m.n}</td><td class="n hide-sm">${m.wins}</td><td class="n hide-sm">${m.losses}</td>
       <td class="n">${m.wr ?? "–"}%</td><td class="n ${cls(m.total)}">${fmtV(m.total)}</td>
       <td class="barcell"><div class="meter ${m.total >= 0 ? "up" : "down"}" style="width:${(Math.abs(m.total) / mx) * 100}%"></div></td></tr>`).join("") + "</tbody>";
 }
@@ -367,7 +346,7 @@ function log() {
   const s = S.sl, rows = sorted(pick(true, true).filter((t) => !S.res || (S.res === "win" ? t.R > 0 : t.R < 0)), s);
   const px = (v) => (v === null || v === undefined ? "–" : v);
   $("log").innerHTML = `<thead><tr>${th("#", "id", s, "hide-sm")}${th("Closed (UTC)", "closed", s)}${th("Coin", "pair", s)}${th("Side", "side", s)}${th("Entry", "entry", s, "n hide-sm")}${th("Stop loss", "sl", s, "n hide-sm")}${th("Take profit", "tp", s, "n hide-sm")}${th("Outcome", "result", s, "hide-md")}${th("Held", "hold_min", s, "n hide-md")}${th("Result", "R", s, "n")}</tr></thead><tbody>` +
-    (rows.length ? rows.slice(0, S.shown).map((t) => `<tr class="main"><td class="mono hide-sm">${esc(t.id)}</td><td>${fmtTime(t.closed)}${simTag(t.src === "sim")}</td><td class="mono">${esc(coinOf(t.pair))}</td>
+    (rows.length ? rows.slice(0, S.shown).map((t) => `<tr class="main"><td class="mono hide-sm">${esc(t.id)}</td><td>${fmtTime(t.closed)}</td><td class="mono">${esc(coinOf(t.pair))}</td>
       <td><span class="pill ${t.side === "LONG" ? "long" : "short"}">${esc(t.side)}</span></td>
       <td class="n mono hide-sm">${px(t.entry)}</td><td class="n mono hide-sm">${px(t.sl)}</td><td class="n mono hide-sm">${px(t.tp)}</td>
       <td class="hide-md">${esc(t.result)}</td><td class="n hide-md">${hold(t.hold_min)}</td>
@@ -378,9 +357,8 @@ function log() {
 }
 
 function options() {
-  const ts = all();
-  const bulan = [...new Set(ts.map((t) => t.closed.slice(0, 7)))].sort().reverse();
-  const koin = [...new Set(ts.map((t) => slot(t.pair)))].sort();
+  const bulan = [...new Set(ALL.map((t) => t.closed.slice(0, 7)))].sort().reverse();
+  const koin = [...new Set(ALL.map((t) => slot(t.pair)))].sort();
   if (S.month && S.month !== "30d" && !bulan.includes(S.month)) S.month = "";
   if (S.coin && !koin.includes(S.coin)) S.coin = "";
   all$(".js-month").forEach((el) => {
@@ -398,17 +376,10 @@ function options() {
 }
 
 function header() {
-  const bt = DATA.backtest, n = $("notice"), live = DATA.live;
-  const adaSim = LABEL_SIM && bt && bt.trades.length;
-  if (adaSim) {
-    n.hidden = false;
-    n.innerHTML = `<b>Trades tagged <span class="sim">SIM</span> (before ${fmtDate(bt.live_from)}) are simulated</b> on past market data and were not sent as signals. Results are gross: fees and slippage cost about 0.06R per trade.`;
-  } else n.hidden = true;
-  $("fSrc").hidden = !adaSim;
-  $("fSrc").value = S.src;
+  const live = DATA.live;
   $("fUnit").value = String(S.unit);
   $("updated").textContent = live ? `Updated ${fmtTime(live.updated)} UTC` : "Could not load results. Refresh to try again.";
-  $("reset").hidden = !(S.coin || S.src || (S.month && S.month !== "30d"));
+  $("reset").hidden = !(S.coin || (S.month && S.month !== "30d"));
 }
 
 function render() { options(); header(); stats(); chart(); months(); coins(); log(); }
@@ -421,9 +392,12 @@ async function get(file) {
 async function load() {
   try { DATA.live = await get("results.json"); } catch (e) { /* ditangani di header() */ }
   try { DATA.backtest = await get("backtest.json"); } catch (e) { DATA.backtest = null; }
-  const siap = (t, src) => ({ ...t, src, closed: iso(t.closed), opened: t.opened ? iso(t.opened) : null });
-  ALL = [...((DATA.backtest && DATA.backtest.trades) || []).map((t) => siap(t, "sim")),
-         ...((DATA.live && DATA.live.trades) || []).map((t) => siap(t, "live"))];
+  const siap = (t) => ({ ...t, closed: iso(t.closed), opened: t.opened ? iso(t.opened) : null });
+  ALL = [...((DATA.backtest && DATA.backtest.trades) || []),
+         ...((DATA.live && DATA.live.trades) || [])]
+    .map(siap)
+    // hapus huruf S di depan kode trade: S4105 -> 4105
+    .map((t) => ({ ...t, id: String(t.id ?? "").replace(/^S/i, "") }));
   // bawaan = 30 hari terakhir; kalau belum ada trade di rentang itu, tampilkan semua
   if (S.auto && S.month === "30d" && !ALL.some((t) => t.closed >= cut())) S.month = "";
   if (DATA.live && DATA.live.brand) { $("brand").textContent = DATA.live.brand.toUpperCase(); document.title = `${DATA.live.brand} · Performance`; }
@@ -431,12 +405,11 @@ async function load() {
 }
 
 const ubah = (fn) => { fn(); S.shown = 30; render(); };
-$("fSrc").addEventListener("change", (e) => ubah(() => { S.src = e.target.value; }));
 $("fUnit").addEventListener("change", (e) => ubah(() => { S.unit = +e.target.value; }));
 all$(".js-month").forEach((el) => el.addEventListener("change", (e) => ubah(() => { S.month = e.target.value; S.auto = false; })));
 all$(".js-coin").forEach((el) => el.addEventListener("change", (e) => ubah(() => { S.coin = e.target.value; })));
 $("fRes").addEventListener("change", (e) => { S.res = e.target.value; S.shown = 30; log(); });
-$("reset").addEventListener("click", () => ubah(() => { S.month = "30d"; S.auto = true; S.coin = ""; S.src = ""; if (!ALL.some((t) => t.closed >= cut())) S.month = ""; }));
+$("reset").addEventListener("click", () => ubah(() => { S.month = "30d"; S.auto = true; S.coin = ""; if (!ALL.some((t) => t.closed >= cut())) S.month = ""; }));
 $("moreBtn").addEventListener("click", () => { S.shown += 50; log(); });
 const headClick = (id, key, fn) => {
   const act = (e) => {
