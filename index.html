@@ -45,6 +45,7 @@ select:focus-visible, .more button:focus-visible, .reset:focus-visible, th[data-
 .grid { display: grid; gap: 12px; grid-template-columns: repeat(4, 1fr); }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 18px; }
 .hero { grid-column: span 2; grid-row: span 2; display: flex; flex-direction: column; justify-content: center; border-color: rgba(35,22,22,.30); }
+.wide { grid-column: span 2; }
 .k { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .2em; }
 .v { font: 500 30px/1.1 var(--serif); margin-top: 8px; font-variant-numeric: lining-nums tabular-nums; }
 .hero .v { font-size: 64px; letter-spacing: -.01em; }
@@ -84,6 +85,9 @@ td.n, th.n { text-align: right; }
 .empty { color: var(--muted); padding: 26px; text-align: center; }
 footer { color: var(--faint); font-size: 12px; margin-top: 44px; border-top: 1px solid var(--line); padding-top: 18px; display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 footer em { font: italic 500 15px var(--serif); color: var(--muted); letter-spacing: .06em; }
+.srcnote { color: var(--muted); font-size: 13px; margin: -6px 0 16px; }
+.bt { display: inline-block; margin-left: 6px; padding: 0 6px; border: 1px dashed var(--faint); border-radius: 999px; font: 500 10px/16px var(--sans); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); vertical-align: 1px; }
+.tps { white-space: nowrap; } .tps .miss, .tps .sep { color: var(--faint); } .tps .sep { margin: 0 5px; }
 tr.sub { display: none; }
 #log tr.main:nth-last-child(2) td { border-bottom: 0; }
 [hidden] { display: none !important; }
@@ -101,6 +105,7 @@ tr.sub { display: none; }
   tr.sub td { padding-top: 0; color: var(--muted); font: 500 11px/1.5 var(--mono); }
   tr.sub td b { font-weight: 500; color: var(--faint); margin-right: 4px; }
   tr.sub td span { margin-right: 10px; white-space: nowrap; }
+  tr.sub td .tps span:not(.sep) { margin-right: 0; }
   #log tr.main td { border-bottom: 0; padding-bottom: 2px; }
 }
 @media (prefers-reduced-motion: no-preference) { tbody tr.pick td { transition: background .15s; } }
@@ -124,12 +129,15 @@ tr.sub { display: none; }
     <div class="filters">
       <select class="js-month" aria-label="Period"></select>
       <select class="js-coin" aria-label="Coin"></select>
+      <select id="fSrc" aria-label="Source"><option value="">All trades</option><option value="live">Live signals</option><option value="bt">Backtest</option></select>
       <select id="fUnit" aria-label="Risk per trade">
         <option value="0">Show in R</option><option value="0.25">0.25% risk per trade</option><option value="0.5">0.5% risk per trade</option><option value="1">1% risk per trade</option>
       </select>
       <button class="reset" id="reset" hidden>Clear</button>
     </div>
   </div>
+
+  <div class="srcnote" id="srcnote"></div>
 
   <div class="grid" id="stats"></div>
 
@@ -154,8 +162,13 @@ tr.sub { display: none; }
       <h2>How to read these numbers</h2>
       <div class="card method">
         <ul>
-          <li><b>R</b> is the risk on one trade: the distance from entry to stop loss. A take profit is <b>+2R</b>, a stop loss is <b>−1R</b>.</li>
-          <li>The <b>% view</b> multiplies R by a fixed risk per trade. At 0.5% risk, +2R is +1% of the account. Risk stays fixed on every trade: results are not compounded.</li>
+          <li><b>R</b> is the risk on one trade: the distance from entry to stop loss. A stop loss before TP1 is <b>−1R</b>.</li>
+          <li>Each signal has <b>three take profits</b>: 50% of the position closes at TP1 (+0.5R), 25% at TP2 (+1.25R) and 25% at TP3 (+2R). The stop loss is not moved. All three = <b>+1.06R</b>; TP2 then stop = <b>+0.31R</b>; TP1 then stop = <b>−0.25R</b>.</li>
+          <li>Earlier live signals used a single take profit at +2R and are shown as they were sent.</li>
+          <li><b>First TP winrate</b>: a trade is a win when price reaches TP1 before the stop loss, and a loss when the stop loss comes first. Earlier single-target signals count as a win when the take profit was hit.</li>
+          <li><b>Hit rate</b>: the share of signals whose limit entry was filled. The others were cancelled before price came back to the entry.</li>
+          <li>Trades marked <span class="bt">Backtest</span> are simulated on past data with the same rules. They were not sent as signals.</li>
+          <li>The <b>% view</b> multiplies R by a fixed risk per trade. At 0.5% risk, +1R is +0.5% of the account. Risk stays fixed on every trade: results are not compounded.</li>
           <li>Trades closed any other way (7-day time stop, manual close) are shown at their <b>actual</b> R.</li>
           <li>Click a month or a coin to filter the whole page. All times are UTC.</li>
         </ul>
@@ -206,7 +219,8 @@ const iso = (s) => new Date(String(s).replace(" ", "T")).toISOString();
 
 const DATA = { live: null, backtest: null };
 // month: "30d" = 30 hari terakhir (bawaan), "" = semua, atau "YYYY-MM". unit: 0 = R, selain itu % risiko per trade
-const S = { month: "30d", coin: "", res: "", unit: 0, shown: 30, auto: true,
+// src: "" = semua, "live" = sinyal yang benar-benar dikirim, "bt" = backtest (simulasi)
+const S = { month: "30d", coin: "", src: "", res: "", unit: 0, shown: 30, auto: true,
             sm: { k: "key", d: -1 }, sc: { k: "total", d: -1 }, sl: { k: "closed", d: -1 } };
 
 // nilai R -> tampilan sesuai pilihan (R, atau % = R x risiko per trade, risiko tetap)
@@ -217,18 +231,25 @@ const fmtV = (r, dec = 2) => {
   return sign(p) + trim(a, a >= 100 ? 0 : a >= 10 ? 1 : dec) + "%";
 };
 
-let ALL = [];
+let ALL = [], SIG = [];
 const cut = () => new Date(Date.now() - 30 * 864e5).toISOString();
 const inPeriod = (t) => !S.month || (S.month === "30d" ? t.closed >= cut() : t.closed.startsWith(S.month));
-const pick = (byMonth, byCoin) => ALL.filter((t) => (!byMonth || inPeriod(t)) && (!byCoin || !S.coin || slot(t.pair) === S.coin));
+// Hit rate = sinyal terisi / sinyal terkirim, menurut tanggal sinyal dipasang
+const pickSig = () => SIG.filter((x) => (!S.src || x.src === S.src) && (!S.coin || slot(x.pair) === S.coin) &&
+  (!S.month || (S.month === "30d" ? x.placed >= cut() : x.placed.startsWith(S.month))));
+const pick = (byMonth, byCoin) => ALL.filter((t) => (!S.src || t.src === S.src) && (!byMonth || inPeriod(t)) && (!byCoin || !S.coin || slot(t.pair) === S.coin));
 
+// menang = TP pertama tersentuh sebelum SL (3 TP: TP1; sinyal lama satu TP: TP-nya).
+// Data lama tanpa kolom hits: untung = menang.
+const menang = (t) => (t.hits != null ? t.hits >= 1 : t.R > 0);
 function summarize(ts) {
   const rs = ts.map((t) => t.R), w = rs.filter((r) => r > 0), l = rs.filter((r) => r < 0);
+  const nw = ts.filter(menang).length;
   let c = 0, peak = 0, dd = 0;
   [...ts].sort((a, b) => a.closed.localeCompare(b.closed)).forEach((t) => { c += t.R; peak = Math.max(peak, c); dd = Math.min(dd, c - peak); });
   const sum = (a) => a.reduce((x, y) => x + y, 0);
-  return { n: rs.length, wins: w.length, losses: l.length, total: +sum(rs).toFixed(2),
-           wr: rs.length ? +(100 * w.length / rs.length).toFixed(1) : null,
+  return { n: rs.length, wins: nw, losses: rs.length - nw, total: +sum(rs).toFixed(2),
+           wr: rs.length ? +(100 * nw / rs.length).toFixed(1) : null,
            avg: rs.length ? +(sum(rs) / rs.length).toFixed(3) : null,
            pf: l.length ? +(sum(w) / -sum(l)).toFixed(2) : null, dd: +dd.toFixed(2) };
 }
@@ -262,16 +283,16 @@ function perWeek(ts) {
 
 function stats() {
   const ts = pick(true, true), s = summarize(ts), pw = perWeek(ts);
+  const sg = pickSig(), isi = sg.filter((x) => x.filled).length;
+  const hr = sg.length ? +(100 * isi / sg.length).toFixed(1) : null;
   const card = (k, v, note = "", extra = "") =>
     `<div class="card ${extra}"><div class="k">${k}</div><div class="v">${v}</div>${note ? `<div class="note">${note}</div>` : ""}</div>`;
   $("stats").innerHTML =
-    card(`Total result · ${periodLabel()}`, `<span class="${cls(s.total)}">${fmtV(s.total)}</span>`,
-      `${s.n} closed trade${s.n === 1 ? "" : "s"}` +
-      (S.unit ? `<br>${fmtR(s.total)} × ${S.unit}% risk per trade. Not compounded, before fees.` : ""), "hero") +
-    card("Win rate", s.wr == null ? "–" : `${s.wr}%`, `${s.wins} wins · ${s.losses} losses`) +
-    card("Profit factor", s.pf ?? "–", "wins ÷ losses") +
-    card("Average per trade", `<span class="${cls(s.avg)}">${fmtV(s.avg, 3)}</span>`) +
-    card("Trades per week", pw == null ? "–" : trim(pw, 1));
+    card(`First TP winrate · ${periodLabel()}`, s.wr == null ? "–" : `${s.wr}%`,
+      `${s.wins} of ${s.n} closed trade${s.n === 1 ? "" : "s"}`, "hero") +
+    card("Hit rate", hr == null ? "–" : `${hr}%`,
+      sg.length ? `${isi} of ${sg.length} signals filled` : "", "wide") +
+    card("Trades per week", pw == null ? "–" : trim(pw, 1), "", "wide");
 }
 
 function chart() {
@@ -310,6 +331,14 @@ function chart() {
       prev = m;
     }
   });
+  // garis pemisah backtest -> sinyal live
+  const li = ts.findIndex((t) => t.src === "live");
+  if (li > 0 && ts.slice(0, li).every((t) => t.src === "bt")) {
+    const x = X(li + 0.5);
+    grid += `<line x1="${x}" x2="${x}" y1="${pt}" y2="${H - pb}" stroke="var(--ink)" stroke-opacity=".55"/>` +
+      `<text x="${x - 6}" y="${pt + 12}" text-anchor="end" font-size="11" fill="var(--muted)">Backtest</text>` +
+      `<text x="${x + 6}" y="${pt + 12}" font-size="11" fill="var(--ink)">Live</text>`;
+  }
   box.insertAdjacentHTML("afterbegin", `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Cumulative result">
     ${grid}<line x1="${pl}" x2="${W - pr}" y1="${Y(0)}" y2="${Y(0)}" stroke="var(--faint)"/>
     <path d="${area}" fill="${col}" opacity=".07"/><path d="${line}" fill="none" stroke="${col}" stroke-width="1.6"/>
@@ -343,15 +372,20 @@ function coins() {
 }
 
 function log() {
-  const s = S.sl, rows = sorted(pick(true, true).filter((t) => !S.res || (S.res === "win" ? t.R > 0 : t.R < 0)), s);
+  const s = S.sl, rows = sorted(pick(true, true).filter((t) => !S.res || (S.res === "win" ? menang(t) : !menang(t))), s);
   const px = (v) => (v === null || v === undefined ? "–" : v);
+  // 3 TP: TP1 / TP2 / TP3, yang tidak tersentuh dibuat pudar; sinyal lama: satu TP
+  const tps = (t) => (t.tps === 3 && t.tp1 != null
+    ? `<span class="tps">${[t.tp1, t.tp2, t.tp].map((v, k) => `<span class="${(t.hits || 0) > k ? "" : "miss"}" title="TP${k + 1}${(t.hits || 0) > k ? " reached" : ""}">${px(v)}</span>`).join('<span class="sep">/</span>')}</span>`
+    : px(t.tp));
+  const tag = (t) => (t.src === "bt" ? '<span class="bt">Backtest</span>' : "");
   $("log").innerHTML = `<thead><tr>${th("#", "id", s, "hide-sm")}${th("Closed (UTC)", "closed", s)}${th("Coin", "pair", s)}${th("Side", "side", s)}${th("Entry", "entry", s, "n hide-sm")}${th("Stop loss", "sl", s, "n hide-sm")}${th("Take profit", "tp", s, "n hide-sm")}${th("Outcome", "result", s, "hide-md")}${th("Held", "hold_min", s, "n hide-md")}${th("Result", "R", s, "n")}</tr></thead><tbody>` +
-    (rows.length ? rows.slice(0, S.shown).map((t) => `<tr class="main"><td class="mono hide-sm">${esc(t.id)}</td><td>${fmtTime(t.closed)}</td><td class="mono">${esc(coinOf(t.pair))}</td>
+    (rows.length ? rows.slice(0, S.shown).map((t) => `<tr class="main"><td class="mono hide-sm">${esc(t.id)}</td><td>${fmtTime(t.closed)}</td><td class="mono">${esc(coinOf(t.pair))}${tag(t)}</td>
       <td><span class="pill ${t.side === "LONG" ? "long" : "short"}">${esc(t.side)}</span></td>
-      <td class="n mono hide-sm">${px(t.entry)}</td><td class="n mono hide-sm">${px(t.sl)}</td><td class="n mono hide-sm">${px(t.tp)}</td>
+      <td class="n mono hide-sm">${px(t.entry)}</td><td class="n mono hide-sm">${px(t.sl)}</td><td class="n mono hide-sm">${tps(t)}</td>
       <td class="hide-md">${esc(t.result)}</td><td class="n hide-md">${hold(t.hold_min)}</td>
       <td class="n ${cls(t.R)}">${fmtV(t.R)}</td></tr>
-      <tr class="sub"><td colspan="10"><span><b>Entry</b>${px(t.entry)}</span><span><b>SL</b>${px(t.sl)}</span><span><b>TP</b>${px(t.tp)}</span></td></tr>`).join("")
+      <tr class="sub"><td colspan="10"><span><b>Entry</b>${px(t.entry)}</span><span><b>SL</b>${px(t.sl)}</span>${t.tps === 3 ? "<br>" : ""}<span><b>TP</b>${tps(t)}</span></td></tr>`).join("")
       : '<tr><td class="empty" colspan="10">No trades in this period.</td></tr>') + "</tbody>";
   $("moreBtn").style.display = rows.length > S.shown ? "" : "none";
 }
@@ -378,8 +412,14 @@ function options() {
 function header() {
   const live = DATA.live;
   $("fUnit").value = String(S.unit);
+  $("fSrc").value = S.src;
   $("updated").textContent = live ? `Updated ${fmtTime(live.updated)} UTC` : "Could not load results. Refresh to try again.";
-  $("reset").hidden = !(S.coin || (S.month && S.month !== "30d"));
+  $("reset").hidden = !(S.coin || S.src || (S.month && S.month !== "30d"));
+  const mulai = DATA.backtest && DATA.backtest.live_from;
+  $("srcnote").innerHTML = mulai
+    ? `Live signals since ${new Date(mulai + "T00:00:00Z").toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" })}. ` +
+      `Earlier trades, marked <span class="bt">Backtest</span>, are simulated on past data with the same rules.`
+    : "";
 }
 
 function render() { options(); header(); stats(); chart(); months(); coins(); log(); }
@@ -393,11 +433,14 @@ async function load() {
   try { DATA.live = await get("results.json"); } catch (e) { /* ditangani di header() */ }
   try { DATA.backtest = await get("backtest.json"); } catch (e) { DATA.backtest = null; }
   const siap = (t) => ({ ...t, closed: iso(t.closed), opened: t.opened ? iso(t.opened) : null });
-  ALL = [...((DATA.backtest && DATA.backtest.trades) || []),
-         ...((DATA.live && DATA.live.trades) || [])]
+  ALL = [...((DATA.backtest && DATA.backtest.trades) || []).map((t) => ({ ...t, src: "bt" })),
+         ...((DATA.live && DATA.live.trades) || []).map((t) => ({ ...t, src: "live" }))]
     .map(siap)
     // hapus huruf S di depan kode trade: S4105 -> 4105
     .map((t) => ({ ...t, id: String(t.id ?? "").replace(/^S/i, "") }));
+  SIG = [...((DATA.backtest && DATA.backtest.signals) || []).map((x) => ({ ...x, src: "bt" })),
+         ...((DATA.live && DATA.live.signals) || []).map((x) => ({ ...x, src: "live" }))]
+    .map((x) => ({ ...x, placed: iso(x.placed) }));
   // bawaan = 30 hari terakhir; kalau belum ada trade di rentang itu, tampilkan semua
   if (S.auto && S.month === "30d" && !ALL.some((t) => t.closed >= cut())) S.month = "";
   if (DATA.live && DATA.live.brand) { $("brand").textContent = DATA.live.brand.toUpperCase(); document.title = `${DATA.live.brand} · Performance`; }
@@ -408,8 +451,9 @@ const ubah = (fn) => { fn(); S.shown = 30; render(); };
 $("fUnit").addEventListener("change", (e) => ubah(() => { S.unit = +e.target.value; }));
 all$(".js-month").forEach((el) => el.addEventListener("change", (e) => ubah(() => { S.month = e.target.value; S.auto = false; })));
 all$(".js-coin").forEach((el) => el.addEventListener("change", (e) => ubah(() => { S.coin = e.target.value; })));
+$("fSrc").addEventListener("change", (e) => ubah(() => { S.src = e.target.value; }));
 $("fRes").addEventListener("change", (e) => { S.res = e.target.value; S.shown = 30; log(); });
-$("reset").addEventListener("click", () => ubah(() => { S.month = "30d"; S.auto = true; S.coin = ""; if (!ALL.some((t) => t.closed >= cut())) S.month = ""; }));
+$("reset").addEventListener("click", () => ubah(() => { S.month = "30d"; S.auto = true; S.coin = ""; S.src = ""; if (!ALL.some((t) => t.closed >= cut())) S.month = ""; }));
 $("moreBtn").addEventListener("click", () => { S.shown += 50; log(); });
 const headClick = (id, key, fn) => {
   const act = (e) => {
